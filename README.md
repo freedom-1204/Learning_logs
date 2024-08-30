@@ -1,7 +1,5 @@
 # “Learning_logs“ 项目笔记
 
-==本项目所用技术包括：Django,Python,sqlite,html==
-
 ----------
 ## 1  建立项目 ##
 
@@ -169,7 +167,7 @@ admin.site.register(Topic)
 
 现在，使用超级用户访问网站：http://127.0.0.1:8000/，将看到如下页面。
 
-![](C:\Users\22317\Pictures\Screenshots\屏幕截图 2024-08-23 160942.png)
+<img src="C:\Users\22317\Pictures\Screenshots\屏幕截图 2024-08-23 160942.png" />
 
 **添加主题**
 
