@@ -1156,3 +1156,268 @@ def new_topic(request):
 >
 >   至此，我们创建了一个功能齐全的项目，它运行在本地计算机上，在下一章我们将设置这个项目的样式，使它变得更漂亮，并将它部署在服务器上，供所有人都能通过互联网注册并创建账户。
 
+## 5  部署项目
+
+在这一章我们将使用**Platform.sh**供我们管理应用程序的部署，让项目在该平台上运行起来。
+
+### 5.1  注册Platform.sh账户
+
+打开Platform.sh官网，点击Free Trial按钮，如图所示，若你有GitHub账户则可以使用它创建，也可以使用邮箱创建，创建账户的过程就不在这里赘述了。
+
+![](assets/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE%202024-08-31%20120800.png)
+
+### 5.2  安装Platform.sh CLI
+
+要将项目部署到Platform.sh服务器并对其进行管理，需要使用Platform.sh CLI（command lineinterface,命令行界面）中的工具。
+
+注：在部署到服务器的过程中，此步骤是最可能出现麻烦的步骤之一，经过作者验证，使用WSL方法完成CLI的安装是最可行的方法之一，当然，你也可以尝试其它安装方法。
+
+WSL(Windows Subsystem for Linux)，这种环境供开发人员可在Windows系统上直接运行Linux，使用该方法安装CLI的过程分为两步：
+
+>   第一步。先安装WSL，安装方法请参考以下博主文章。
+>
+>   [安装 WSL | Microsoft Learn](https://learn.microsoft.com/zh-cn/windows/wsl/install)
+>
+>   [Windows 11：WSL 2 安装和管理指南，3 种方法任你选 - 系统极客 (sysgeek.cn)](https://www.sysgeek.cn/install-wsl-2-windows/#2-在-windows-11-上安装-wsl-2)
+
+注：如此处遇到以下问题
+*无法从 'https://raw.githubusercontent.com/microsoft/WSL/master/distributions/DistributionInfo.json’提取列表分发。无法解析服务器的名称或地址Error code: Wsl/WININET_E_NAME_NOT_RESOLVED*
+
+请参考[解决raw.githubusercontent.com无法访问的问题-CSDN博客](https://blog.csdn.net/weixin_44293949/article/details/121863559)
+
+>   第二步。安装Platform.sh CLI，
+>
+>   在WSL界面依次执行以下命令：
+>
+>   $ sudo apt install curl php-cli
+>
+>   4 curl -fsS https://platform.sh/cli/installer | php
+>
+>   若此处有问题请参考以下博主文章。
+>
+>   [WSL安装及platform.sh CLI安装遇到的问题_如何在windosw系统下安装 platformsh cli-CSDN博客](https://blog.csdn.net/qq_74053509/article/details/136005863)
+
+注：若遇到安装CLI问题可能是网络超时原因，更新一下原列表`sudo apt-get update`
+
+### 5.3  为部署做准备
+
+#### 5.3.1  安装platformshconfig
+
+这个包帮助监测项目是运行在本地还是服务器上，打开命令窗口进入项目目录，在活动的虚拟环境中执行以下命令：
+
+```
+(ll_env)learning_log$：pip install platformshconfig
+```
+
+#### 5.3.2  创建文件requirements.txt
+
+远程服务器需要知道项目都需要哪些包，为此，在活动的虚拟环境中使用pip生成一个文件：
+
+```
+(ll_env)learning_log$：pip freeze > requirements.txt
+```
+
+![](assets/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE%202024-08-31%20125318.png)
+
+命令freeze将项目中安装的所有包名称都写入requirements.txt。若你的系统中的包版本与此有所不同，请保留你的版本号即可。
+
+在线服务器还需要另外两个包，用于为生产环境中的项目提供服务，在requirements.txt所在的目录中，新建一个requirements_remote.txt文件，在其中添加如下两个包：
+
+![](assets/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE%202024-08-31%20125522.png)
+
+gunicorn包在远程服务器上响应带来的请求，psycopg2包让Django能够管理Platform.sh使用的Postgres数据库，这是一个开源数据库，适用于部署生产环境中的应用程序。
+
+#### 5.3.3  添加配置文件
+
+所有的托管平台都需要一些配置，这样项目才能在服务器上正确运行，本节将添加三个配置文件。
+
+在进行以下步骤前请先确保你的计算机能够显示隐藏的项目。
+
+1.  **.platform.app.yaml**：项目的主配置文件，向Platform.sh指出当前部署的项目是什么类型的以及该项目需要什么样的资源。（前面的点不能忘！！！）
+
+    在Learning_log根目录下新建.platform.app.yaml文件，可以先新建txt文件，写入以下内容，再修改拓展名为yaml。
+
+    ```
+    name: "ll_project"
+    type: "python:3.12"
+    
+    relationships:
+        database: "db:postgresql"
+    
+    # The configuration of the app when it's exposed to the web.
+    web:
+        upstream:
+            socket_family: unix
+        commands:
+            start: "gunicorn -w 4 -b unix:$SOCKET ll_project.wsgi:application"
+        locations:
+            "/":
+                passthru: true
+            "/static":
+                root: "static"
+                expires: 1h
+                allow: true
+    
+    # The size of the persistent disk of the application (in MB).
+    disk: 512
+    
+    # Set a local read/write mount for logs.
+    mounts:
+        "logs":
+            source: local
+            source_path: logs
+    
+    # The hooks executed at various points in the lifecycle of the application.
+    hooks:
+        build: |
+            pip install --upgrade pip
+            pip install -r requirements.txt
+            pip install -r requirements_remote.txt
+            
+            mkdir logs
+            python manage.py collectstatic
+            rm -rf logs
+        deploy: |
+            python manage.py migrate
+    ```
+
+2.  **routes.yaml**：定义了通往项目的路由。在manage.py所在的目录新建一个.platform文件夹，在其中新建routes.yaml文件，写入以下内容。
+
+    ```
+    # Each route describes how an incoming URL will be processed by Platform.sh.
+    
+    "https://{default}/":
+        type: upstream
+        upstream: "ll_project:http"
+    
+    "https://www.{default}/":
+        type: redirect
+        to: "https://{default}/"
+    ```
+
+    
+
+3.  **services.yaml**：定义了项目所需的其他服务。将这个文件一起保存在.platform文件夹中。
+
+    ```
+    # Each service listed will be deployed in its own container as part of your
+    #   Platform.sh project.
+    
+    db:
+        type: postgresql:12
+        disk: 1024
+    ```
+
+    这个文件定义了一个Postgres数据库。
+
+### 5.4  修改settings.py
+
+在其中添加一个片段，指定一些**Platform.sh**环境设置：
+
+```
+#   Platform.sh设置
+from platformshconfig import Config
+
+config = Config()
+if config.is_valid_platform():
+    ALLOWED_HOSTS.append('.platformsh.site')
+    DEBUG = False
+
+    if config.appDir:
+        STATIC_ROOT = Path(config.appDir) / 'static'
+    if config.projectEntropy:
+        SECRET_KEY = config.projectEntropy
+
+    if not config.in_build():
+        db_settings = config.credentials('database')
+        DATABASES = {
+            'default': {
+                'ENGINE': 'django.db.backends.postgresql',
+                'NAME': db_settings['path'],
+                'USER': db_settings['username'],
+                'PASSWORD': db_settings['password'],
+                'HOST': db_settings['host'],
+                'PORT': db_settings['port'],
+    },
+}
+```
+
+注：虽然通常把import语句放在模块开头，但在这里将所有与线上部署相关的设置放在同一位置比较好。
+
+### 5.5  使用Git跟踪项目文件
+
+Git是一个版本控制程序，让你能够在每次成功实现新功能后提交这种更新，或者恢复到最近一次成功运行的状态。
+
+安装与配置Git的过程请自行查阅，不再赘述。
+
+**忽略文件**
+
+无需让Git跟踪项目的所有文件，因此我们让它忽略一些文件，在manage.py所在的文件夹中创建一个**.gitignore**文件，输入以下代码：
+
+```
+ll_env/
+__pycache__/
+*.sqlite3
+```
+
+**提交项目**
+
+```
+git init
+git add .
+git commit -am "输入你的日志消息"
+```
+
+注：有关Git的基本命令用法请自行查阅。
+
+### 5.6  在Platform.sh上创建项目
+
+**在Platform.sh主页创建新项目**
+
+点击create project->create from scratch，输入项目名，工作区（默认main即可）和时区（选择一个延时最低的）。
+
+![](assets/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE%202024-08-31%20132316.png)
+
+**使用CLI推送项目**
+
+在命令行窗口进入活动的虚拟环境，输入`wsl`进入CLI，输入`platform login`登录服务器，具体操作如下图：
+
+![](assets/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE%202024-08-31%20132711.png)
+
+点击出现的URL登录。
+
+>   注：若在此过程中出现“wsl: 检测到 localhost 代理配置，但未镜像到 WSL。NAT 模式下的 WSL 不支持 localhost 代理”，参考[解决“wsl: 检测到 localhost 代理配置，但未镜像到 WSL。NAT 模式下的 WSL 不支持 localhost 代理”_nat模式下的wsl不支持localhost代理-CSDN博客](https://blog.csdn.net/m0_62815143/article/details/141285660)
+
+![](assets/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE%202024-08-31%20132750.png)
+
+注：若出现如图所示错误，这是网络代理问题，请切换代理重试
+
+![](assets/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE%202024-08-31%20132906.png)
+
+出现该信息则成功登录。
+
+输入`platform create`，选择你前面创建的Platform.sh项目名字，选择你前面选择的时区，输入`main`创建项目，具体操作如下图：
+
+![](assets/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE%202024-08-31%20133125.png)
+
+出现如下图所示信息则创建成功！
+
+![](assets/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE%202024-08-31%20133414.png)
+
+输入`platform push`将项目推送到服务器上，在这个此过程中可能会出现很多错误信息，不必理会，若要输入Y/N，都输入Y。
+
+出现如下图所示信息则推送成功！
+
+![](assets/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE%202024-08-31%20133621.png)
+
+现在输入`platform url`获得可以链接到你的项目地址的URL，我这里有四个：
+
+![](assets/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE%202024-08-31%20133746.png)
+
+复制粘贴到浏览器地址栏，即可访问项目主页，国内网络比较慢，可能需要网络代理。
+
+------
+
+## 到此，本项目的所有内容已全部完毕！后续可能会做一些项目上的改动与维护，但主要的内容已全部完毕，这已经是一个完整的Django Web项目！
+
+## 在本项目中，我们用到的技术有：Python，Django，Sqlite，html，Platform.sh
